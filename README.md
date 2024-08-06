@@ -38,5 +38,6 @@ The code above is not optimized but aimed at readability in makecode blocks
 
 Find the name or index of the serialport and change line 111:  
 `serialObj = new hxSerial.Serial(deviceList[deviceList.length - 1], 115200, true);`  
-with the correct index or use a string with the name.  
+with the correct deviceList index or use a string with the name.  
+The device list is traced to the terminal.  
 *At the moment it chooses the last item in the devicelist.*
