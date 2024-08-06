@@ -3,6 +3,13 @@
 
 package;
 
+#if sys
+import sys.FileSystem;
+import sys.io.File;
+#end
+
+import openfl.ui.Keyboard;
+import openfl.events.KeyboardEvent;
 import openfl.filters.DropShadowFilter;
 import away3d.lights.PointLight;
 import openfl.display.Sprite;
@@ -35,6 +42,7 @@ import openfl.display.BitmapData;
 import openfl.Assets;
 import openfl.Lib;
 import openfl.text.*;
+import openfl.net.SharedObject;
 import hxSerial.Serial;
 
 class Main extends Sprite {
@@ -50,9 +58,9 @@ class Main extends Sprite {
 	var _shadow:SoftShadowMapMethod;
 
 	// scene objects and materials
-	var spaceShip:ObjectContainer3D;
-	var target:ObjectContainer3D;
 	var skyBox:SkyBox;
+	var target:ObjectContainer3D;
+	var spaceShip:SpaceShip;
 	var cubeTexture:BitmapCubeTexture;
 	var shipMaterials:Map<String, SinglePassMaterialBase> = [];
 
@@ -68,11 +76,10 @@ class Main extends Sprite {
 	var _lastMouseY:Float;
 
 	//
-	var deviceList:Array<String> = [];
 	var serialObj:hxSerial.Serial;
+	var deviceList:Array<String> = [];
+	var serialPortIndex:Int = 0;
 	var serialBuffer:String = "";
-
-	var sInputArray:Array<String> = [];
 	var sInput:String;
 	var serialConnected:Bool = false;
 	var text:TextField;
@@ -82,9 +89,11 @@ class Main extends Sprite {
 	var zSmooth:Array<Int> = [0, 0, 0, 0, 0, 0];
 	var btnA:Bool;
 	var btnB:Bool;
+	var so:SharedObject;
 
 	var shipSpeed:Int = 10;
 
+	var storedPortPath:String;
 	/**
 	 * Constructor
 	 */
@@ -103,13 +112,78 @@ class Main extends Sprite {
 		initMaterials();
 		initObjects();
 		initListeners();
+		
+		storedPortPath = haxe.io.Path.join([lime.system.System.applicationStorageDirectory, "port.txt"]);
+		connectSerialPortByIndex(readStoredPortIndex());
+	}
+
+	/**
+	 * read stored portIndex from file
+	 * @return Int
+	 */
+	function readStoredPortIndex():Int {
+		#if sys
+		if (FileSystem.exists(storedPortPath)) {
+			serialPortIndex = Std.parseInt(sys.io.File.getContent(storedPortPath));
+			return serialPortIndex;
+		} else {
+			return 0;
+		}
+		#end
+		return 0;
+	}
+
+	/**
+	 * save portIndex to file
+	 */
+	function saveStoredPortIndex() {
+		#if sys
+		File.saveContent(storedPortPath, '$serialPortIndex');
+		#end
+	}
+
+	/**
+	 * Connect to the a SerialPort by Index
+	 * @param i PortIndex
+	 */
+	function connectSerialPortByIndex(i:Int) {
+		if (serialObj != null) {
+			if (serialObj.isSetup) {
+				serialObj.close();
+			}
+		}
 
 		deviceList = Serial.getDeviceList();
-		trace(deviceList);
-		
-		if (deviceList.length > 0) {
-			serialObj = new hxSerial.Serial(deviceList[deviceList.length - 1], 115200, true);
+
+		if (i >= 0 && i < deviceList.length) {
+			serialObj = new hxSerial.Serial(deviceList[i], 115200, true);
+			text.text = 'connected to ${serialObj.portName}';
 			serialConnected = true;
+			serialPortIndex = i;
+		} else {
+			text.text = 'SerialPort index $i is not available';
+		}
+	}
+
+	/**
+	 * Connect to the next SerialPort if available
+	 */
+	function nextPort() {
+		if (deviceList != null) {
+			if (serialPortIndex < deviceList.length - 2) {
+				connectSerialPortByIndex(serialPortIndex + 1);
+			}
+		}
+	}
+
+	/**
+	 * Connect to the previous SerialPort if available
+	 */
+	function previousPort() {
+		if (deviceList != null) {
+			if (serialPortIndex < 0) {
+				connectSerialPortByIndex(serialPortIndex - 1);
+			}
 		}
 	}
 
@@ -206,7 +280,8 @@ class Main extends Sprite {
 	 * Initialise the scene objects
 	 */
 	private function initObjects():Void {
-		spaceShip = new ObjectContainer3D();
+	
+		spaceShip = new SpaceShip(_lightPicker);
 		spaceShip.scale(50);
 		spaceShip.y = 150;
 		spaceShip.z = 150;
@@ -228,37 +303,13 @@ class Main extends Sprite {
 		stage.addEventListener(Event.RESIZE, onResize);
 		stage.addEventListener(MouseEvent.MOUSE_DOWN, onMouseDown);
 		stage.addEventListener(MouseEvent.MOUSE_UP, onMouseUp);
+		stage.addEventListener(KeyboardEvent.KEY_UP, onKeyUp);
 		onResize();
-
-		// setup the url map for textures in the 3ds file
-		var assetLoaderContext:AssetLoaderContext = new AssetLoaderContext();
-		// assetLoaderContext.mapUrlToData("../images/Material1noCulling.jpg", Assets.getBitmapData("assets/Material1noCulling.jpg"));
-		// assetLoaderContext.mapUrlToData("../images/Color_009noCulling.jpg", Assets.getBitmapData("assets/Color_009noCulling.jpg"));
-
-		Asset3DLibrary.enableParser(DAEParser);
-		Asset3DLibrary.addEventListener(Asset3DEvent.ASSET_COMPLETE, onAssetComplete);
-		Asset3DLibrary.loadData(Assets.getBytes('assets/spaceship_lowpoly.dae'), assetLoaderContext);
 	}
 
 	/**
-	 * Listener function for asset complete event on loader
+	 * parse serial data
 	 */
-	private function onAssetComplete(event:Asset3DEvent) {
-		var asset:IAsset = event.asset;
-
-		switch (asset.assetType) {
-			case Asset3DType.MESH:
-				var spaceShipMesh = cast(asset, Mesh);
-				spaceShip.addChild(spaceShipMesh);
-
-			case Asset3DType.MATERIAL:
-				var material:SinglePassMaterialBase = cast(asset, SinglePassMaterialBase);
-				shipMaterials.set(material.name, material);
-				material.ambientColor = 0xffffff;
-				material.lightPicker = _lightPicker;
-		}
-	}
-
 	private function parseSerial() {
 		if (serialConnected) {
 			var bytesAvailable = serialObj.available();
@@ -268,23 +319,21 @@ class Main extends Sprite {
 
 				// if there's a line feed?
 				if (serialBuffer.indexOf('\n') != -1) {
+					
+					// remove any \r characters
+					StringTools.replace(serialBuffer, "\r","");
+
 					// is the newline at the end of the buffer?
 					var noBytesAfterNewline = serialBuffer.lastIndexOf('\n') == serialBuffer.length - 1;
-
+					
 					// split lines
 					var lines:Array<String> = serialBuffer.split("\n");
-
-					var lastCompleteLine = 0;
-					if (lines.length > 2) {
-						// nummber of lines depends on the speed the microcontroller sends its data
-						// if the newline was at the end of the buffer, the last item will be empty, so get the secondlast item
-						lastCompleteLine = noBytesAfterNewline ? lines.length - 2 : 0;
-					}
-					sInput = lines[lastCompleteLine];
-
+					
+					// TODO: handle All Lines, not just the first
+					sInput = lines[0];
 					var temp = sInput.split(',');
+					
 					if (temp.length > 2) {
-						sInputArray = temp;
 						zSmooth.unshift(Std.parseInt(temp[0]));
 						zSmooth.pop();
 						xSmooth.unshift(Std.parseInt(temp[1]));
@@ -313,17 +362,7 @@ class Main extends Sprite {
 
 		_counter = Lib.getTimer() / 500;
 
-		if (shipMaterials.exists('fireMaterial-material')) {
-			if (btnA) {
-				shipMaterials.get('fireMaterial-material').gloss = Math.random();
-				shipMaterials.get('fireMaterial-material').colorTransform.blueMultiplier = .6 + Math.random();
-				shipMaterials.get('fireMaterial-material').colorTransform.greenMultiplier = .3  + Math.random();
-			}else{
-				shipMaterials.get('fireMaterial-material').colorTransform.blueMultiplier = .2;
-				shipMaterials.get('fireMaterial-material').colorTransform.redMultiplier = .1;
-				shipMaterials.get('fireMaterial-material').colorTransform.greenMultiplier = 0;
-			}
-		}
+		spaceShip.setShipEngine(btnA);
 
 		if (spaceShip != null) {
 			spaceShip.rotationX = Math.min(45, Math.max(-45, arrayAverage(xSmooth)));
@@ -340,6 +379,10 @@ class Main extends Sprite {
 		view.render();
 	}
 
+	/**
+	 * Calculate array Average
+	 * @param a 
+	 */
 	private function arrayAverage(a:Array<Int>) {
 		var asum = 0;
 		for (index in 0...a.length) {
@@ -358,6 +401,22 @@ class Main extends Sprite {
 		_lastMouseY = stage.mouseY;
 		_move = true;
 		stage.addEventListener(Event.MOUSE_LEAVE, onStageMouseLeave);
+	}
+
+	/**
+	 * KeyUp listener for stage
+	 */
+	private function onKeyUp(event:KeyboardEvent) {
+		switch (event.keyCode) {
+			case Keyboard.RIGHTBRACKET:
+				nextPort();
+
+			case Keyboard.LEFTBRACKET:
+				previousPort();
+
+			case Keyboard.S:
+				saveStoredPortIndex();
+		}
 	}
 
 	/**
