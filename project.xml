@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project>
+	
+	<meta title="Serial Micro:bit Spaceship" package="gepatto.nl.experiments.serialAway3D" version="0.1.0" />
+	
+	<app main="Main" file="serialAway3D" path="release" unless="debug" />
+	<app main="Main" file="serialAway3D_debug" path="debug" if="debug" />
+	
+	<window background="0x000000" orientation="landscape" />
+	<window width="1024" height="700" if="desktop" fps="60" />
+	
+	<source path="Source" />
+
+	<haxelib name="hxSerial"/>
+	<haxelib name="away3d" />
+	
+	<assets path="Assets" rename="assets" />
+	
+</project>
